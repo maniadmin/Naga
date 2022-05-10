@@ -1,0 +1,110 @@
+pipeline {
+    agent any
+    stages {
+        stage('SCM Checkout'){
+            steps{
+                sh "sudo pwd"
+                sh "sudo rm -rf *"
+       git branch: 'censor_gentl_v1', credentialsId: 'git-creds', url: 'https://kolukonda@bitbucket.org/works_julongsoft/censor_generic_repo.git'
+   }
+        }
+        
+         stage('Angular Build'){
+            steps{
+            
+      sh "sudo pwd"
+     dir("web-app"){
+     sh ' npm -v'
+     sh ' node -v'
+     sh 'sudo npm install'
+     sh 'sudo npm run build'
+     sh 'sudo cp -r dist/web-app/** ../src/main/resources/static'
+    }
+    
+
+  }
+        }
+   
+    stage('Mvn Package'){
+        
+     steps{
+         dir("/var/lib/jenkins/workspace/${env.JOB_NAME}/"){
+             
+         }
+     sh "pwd"
+     sh "mvn compile install -Dspring.profiles.active=prod -DskipTests=true"
+  }
+    }
+   
+   stage('Build Docker Image'){
+    steps{
+     sh "docker build -t jayuser/gentl-censor:${env.BUILD_ID} ."
+   }
+   }
+   
+   stage('Push Docker Image'){
+    steps{
+     withCredentials([string(credentialsId: 'dockerHubSecret', variable: 'dockerHubSecret')]) {
+     sh "docker login -u jayuser -p ${dockerHubSecret}"
+}
+   
+     sh "docker push jayuser/gentl-censor:${env.BUILD_ID}"
+   }
+   }
+  stage('Kill Container on Prod Server'){
+    steps{
+        script {
+      try {
+           
+       def dockerStop1 = 'docker stop gentl-censor'
+        def dockerStop2 = 'docker rm gentl-censor'
+    sshagent(['build-server']) {
+      sh "ssh -o StrictHostKeyChecking=no ubuntu@172.31.12.64  ${dockerStop1}"
+     }
+     sshagent(['build-server']) {
+      sh "ssh -o StrictHostKeyChecking=no ubuntu@172.31.12.64  ${dockerStop2}"
+     }
+          
+         
+   }catch(Exception e){
+       
+   }
+        }
+    }
+  } 
+   stage('Run Container on Prod Server'){
+     steps{
+          script {
+     def dockerRun = "docker run --rm -p 8086:8090 -d --name gentl-censor jayuser/gentl-censor:${env.BUILD_ID}"
+     sshagent(['build-server']) {
+       sh "ssh -o StrictHostKeyChecking=no ubuntu@172.31.12.64  ${dockerRun}"
+     }
+          }
+   }
+   }
+    }
+    post {
+        // always {
+        //     echo 'One way or another, I have finished'
+        //     deleteDir() /* clean up our workspace */
+        // }
+        success {
+            echo 'Job Success !'
+            sh "pwd"
+            mail(from: "julongteam@gmail.com", 
+          to: "nagaraju.julong@gmail.com", 
+          subject: "Gentl Censor Deployment Job '${env.JOB_NAME} ${env.BUILD_NUMBER}' is Success",
+          body: "Check console output at '${env.BUILD_URL}'")
+
+        }
+
+        failure {
+            echo 'Job Failed !'
+            mail(from: "julongteam@gmail.com", 
+          to: "nagaraju.julong@gmail.com", 
+          subject: "Gentl Censor Deployment Job '${env.JOB_NAME} ${env.BUILD_NUMBER}' Failed",
+          body: "Check console output at '${env.BUILD_URL}'")
+        }
+    }
+    
+}
